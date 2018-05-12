@@ -193,7 +193,7 @@ cmd_dth(int nargs, char **args)
 		kprintf("Usage: dth\n");
 		return EINVAL;
 	}
-	dbflags = 0x0010;
+	dbflags = DB_THREADS;
 	return 0;
 }
 
