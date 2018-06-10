@@ -9,9 +9,13 @@
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
-
+#include "opt-A2.h"
+#include "mips/trapframe.h" 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
+
+
+
 
 void sys__exit(int exitcode) {
 
@@ -55,7 +59,7 @@ sys_getpid(pid_t *retval)
 {
   /* for now, this is just a stub that always returns a PID of 1 */
   /* you need to fix this to make it work properly */
-  *retval = 1;
+  *retval = curproc->self_pid;
   return(0);
 }
 
@@ -92,3 +96,40 @@ sys_waitpid(pid_t pid,
   return(0);
 }
 
+#if OPT_A2
+int 
+sys_fork(struct trapframe *tf, int *retval) {
+
+	struct proc* child_process;
+	child_process = proc_create_runprogram("1");
+
+	if (child_process == NULL) {
+		return ENOMEM;
+	}
+	spinlock_acquire(&child_process->p_lock);
+	int result_of_ascopy = as_copy(curproc_getas(), &child_process->p_addrspace);
+	if (result_of_ascopy != 0) {
+		proc_destroy(child_process);
+		return ENOMEM;
+	}
+	spinlock_release(&child_process->p_lock);
+
+
+	struct trapframe *copytrapframe = kmalloc(sizeof (struct trapframe));
+	if (copytrapframe == NULL) {
+
+		proc_destroy(child_process);
+		return ENOMEM;
+	}
+	handlePIDpcrelationship(curproc, child_process);
+	*copytrapframe = *tf;  	
+	int threadfork_errorcode = -1;
+	threadfork_errorcode = thread_fork("thread_of_child", child_process, &enter_forked_process, (void *)copytrapframe, (unsigned long)2);
+	if (threadfork_errorcode != 0) {
+		proc_destroy(child_process);
+		return ENOMEM;
+	}
+	*retval = child_process->self_pid;	
+	return 0;
+}
+#endif

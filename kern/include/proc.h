@@ -38,12 +38,16 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
-
+#include "opt-A2.h"
 struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
 #endif // UW
+#if OPT_A2
+void handlePIDpcrelationship(struct proc *parent_process, struct proc *child_process);
+#endif
+
 
 /*
  * Process structure.
@@ -60,15 +64,21 @@ struct proc {
 	struct vnode *p_cwd;		/* current working directory */
 
 #ifdef UW
-  /* a vnode to refer to the console device */
-  /* this is a quick-and-dirty way to get console writes working */
-  /* you will probably need to change this when implementing file-related
-     system calls, since each process will need to keep track of all files
-     it has opened, not just the console. */
-  struct vnode *console;                /* a vnode for the console device */
+	/* a vnode to refer to the console device */
+	/* this is a quick-and-dirty way to get console writes working */
+	/* you will probably need to change this when implementing file-related
+		 system calls, since each process will need to keep track of all files
+		 it has opened, not just the console. */
+	struct vnode *console;                /* a vnode for the console device */
 #endif
 
 	/* add more material here as needed */
+#if OPT_A2
+	unsigned int self_pid;
+	struct array *children_pid;
+	unsigned int parent_pid;
+#endif
+
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */

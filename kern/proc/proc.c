@@ -50,7 +50,7 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
-
+#include "opt-A2.h"
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -69,6 +69,11 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
+#if OPT_A2
+struct lock *pidlock;
+struct array *ProcessList;
+int pid_counter;
+#endif
 
 
 /*
@@ -102,7 +107,14 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
-
+#if OPT_A2
+	proc->self_pid = 2;
+	proc->parent_pid = -1;
+	proc->children_pid = array_create();
+	if (proc->children_pid == NULL) {
+		panic("Failed to create children_pid array");
+	}
+#endif
 	return proc;
 }
 
@@ -155,6 +167,7 @@ proc_destroy(struct proc *proc)
 		as = curproc_setas(NULL);
 		as_destroy(as);
 	}
+	
 #endif // UW
 
 #ifdef UW
@@ -162,6 +175,10 @@ proc_destroy(struct proc *proc)
 	  vfs_close(proc->console);
 	}
 #endif // UW
+
+#if OPT_A2
+    //array_destroy(proc->children_pid);
+#endif
 
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
@@ -207,8 +224,25 @@ proc_bootstrap(void)
   if (no_proc_sem == NULL) {
     panic("could not create no_proc_sem semaphore\n");
   }
-#endif // UW 
+#endif // UW
+#if OPT_A2
+	ProcessList = array_create();
+	if (ProcessList == NULL) {
+		panic("Failed to create ProcessList array");
+	}
+	pid_counter = 3;
+	
+	pidlock = lock_create("PIDLock");
+	if (pidlock == NULL) {
+		panic ("Failed to create PIDLock");
+	}
+#endif 
 }
+
+
+
+
+
 
 /*
  * Create a fresh proc for use by runprogram.
@@ -364,3 +398,20 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+#if OPT_A2
+
+void handlePIDpcrelationship(struct proc* parent_process, struct proc* child_process) {
+	lock_acquire(pidlock);
+	unsigned int length_ProcessList = array_num(ProcessList);
+	unsigned int length_children_pid = array_num(parent_process->children_pid);
+  child_process->self_pid = pid_counter;
+  ++pid_counter;
+  child_process->parent_pid = parent_process->self_pid;
+	//DEBUG(DB_EXEC, "first");
+  array_add(parent_process->children_pid, (unsigned int *)child_process->self_pid, &length_ProcessList);
+	//DEBUG(DB_EXEC, "second");
+  array_add(ProcessList, child_process, &length_children_pid);
+	//DEBUG(DB_EXEC, "third");
+  lock_release(pidlock);
+}
+#endif
