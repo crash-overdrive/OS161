@@ -72,7 +72,7 @@ struct semaphore *no_proc_sem;
 #if OPT_A2
 struct lock *pidlock;
 struct array *ProcessList;
-int pid_counter;
+volatile int pid_counter;
 #endif
 
 

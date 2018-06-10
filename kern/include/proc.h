@@ -74,9 +74,9 @@ struct proc {
 
 	/* add more material here as needed */
 #if OPT_A2
-	unsigned int self_pid;
+	volatile unsigned int self_pid;
 	struct array *children_pid;
-	unsigned int parent_pid;
+	volatile unsigned int parent_pid;
 #endif
 
 };
