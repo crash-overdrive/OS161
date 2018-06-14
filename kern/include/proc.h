@@ -29,12 +29,14 @@
 
 #ifndef _PROC_H_
 #define _PROC_H_
-
 /*
  * Definition of a process.
  *
  * Note: curproc is defined by <current.h>.
  */
+#if OPT_A2
+#include "synch.h"
+#endif
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
@@ -45,7 +47,16 @@ struct vnode;
 struct semaphore;
 #endif // UW
 #if OPT_A2
+extern struct array *process_list;
+extern struct lock *pid_lock;
+extern volatile int pid_counter;
+extern struct lock *process_lock;
+extern struct lock *process_list_lock;
 void handlePIDpcrelationship(struct proc *parent_process, struct proc *child_process);
+bool inProcessList(unsigned int PID);
+struct proc *getChild(struct proc *parent_process, unsigned int PID);
+void removeFromProcessList(unsigned int PID);
+void handleChildrenOnDeath(struct proc *p);
 #endif
 
 
@@ -56,13 +67,13 @@ struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		/* Lock for this structure */
 	struct threadarray p_threads;	/* Threads in this process */
-
+	
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
 
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
-
+	
 #ifdef UW
 	/* a vnode to refer to the console device */
 	/* this is a quick-and-dirty way to get console writes working */
@@ -74,9 +85,13 @@ struct proc {
 
 	/* add more material here as needed */
 #if OPT_A2
+	struct cv *process_cv;
+	struct lock *proc_lock;
 	volatile unsigned int self_pid;
-	struct array *children_pid;
-	volatile unsigned int parent_pid;
+	struct array *children_list;
+	struct proc *parent_process;
+	volatile bool isAlive;
+	volatile unsigned int EXIT_CODE;
 #endif
 
 };

@@ -70,9 +70,11 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 #if OPT_A2
-struct lock *pidlock;
-struct array *ProcessList;
+struct lock *pid_lock;
+struct array *process_list;
 volatile int pid_counter;
+struct lock *process_lock;
+struct lock *process_list_lock;
 #endif
 
 
@@ -108,11 +110,22 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 #if OPT_A2
+	//kprintf("Creating a process WOOHOO\n");
+	proc->isAlive = true;
+	proc->EXIT_CODE = -1;
 	proc->self_pid = 2;
-	proc->parent_pid = -1;
-	proc->children_pid = array_create();
-	if (proc->children_pid == NULL) {
+	proc->parent_process = NULL;
+	proc->children_list = array_create();
+	if (proc->children_list == NULL) {
 		panic("Failed to create children_pid array");
+	}
+	proc->process_cv = cv_create("Process_CV");
+	if (proc->process_cv == NULL) {
+		panic("Could not create Process CV");
+	}
+	proc->proc_lock = lock_create("Proc_Lock");
+	if (proc->proc_lock == NULL) {
+		panic("Could not create Proc Lock");
 	}
 #endif
 	return proc;
@@ -125,12 +138,12 @@ void
 proc_destroy(struct proc *proc)
 {
 	/*
-         * note: some parts of the process structure, such as the address space,
-         *  are destroyed in sys_exit, before we get here
-         *
-         * note: depending on where this function is called from, curproc may not
-         * be defined because the calling thread may have already detached itself
-         * from the process.
+	 * note: some parts of the process structure, such as the address space,
+	 *  are destroyed in sys_exit, before we get here
+	 *
+	 * note: depending on where this function is called from, curproc may not
+	 * be defined because the calling thread may have already detached itself
+	 * from the process.
 	 */
 
 	KASSERT(proc != NULL);
@@ -167,40 +180,44 @@ proc_destroy(struct proc *proc)
 		as = curproc_setas(NULL);
 		as_destroy(as);
 	}
-	
+
 #endif // UW
 
 #ifdef UW
 	if (proc->console) {
-	  vfs_close(proc->console);
+		vfs_close(proc->console);
 	}
 #endif // UW
 
 #if OPT_A2
-    //array_destroy(proc->children_pid);
+	//lock_destroy(proc->proc_lock);
+	//cv_destroy(proc->process_cv);
+	//array_setsize(proc->children_list,0);
+	//array_destroy(proc->children_list);
+	//removeFromProcessList(proc->self_pid);
+	//handleChildrenOnDeath(curproc);
 #endif
 
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
-
 	kfree(proc->p_name);
 	kfree(proc);
 
 #ifdef UW
 	/* decrement the process count */
-        /* note: kproc is not included in the process count, but proc_destroy
-	   is never called on kproc (see KASSERT above), so we're OK to decrement
-	   the proc_count unconditionally here */
+	/* note: kproc is not included in the process count, but proc_destroy
+		 is never called on kproc (see KASSERT above), so we're OK to decrement
+		 the proc_count unconditionally here */
 	P(proc_count_mutex); 
 	KASSERT(proc_count > 0);
 	proc_count--;
 	/* signal the kernel menu thread if the process count has reached zero */
 	if (proc_count == 0) {
-	  V(no_proc_sem);
+		V(no_proc_sem);
 	}
 	V(proc_count_mutex);
 #endif // UW
-	
+
 
 }
 
@@ -226,22 +243,26 @@ proc_bootstrap(void)
   }
 #endif // UW
 #if OPT_A2
-	ProcessList = array_create();
-	if (ProcessList == NULL) {
+	process_list = array_create();
+	if (process_list == NULL) {
 		panic("Failed to create ProcessList array");
 	}
 	pid_counter = 3;
 	
-	pidlock = lock_create("PIDLock");
-	if (pidlock == NULL) {
+	pid_lock = lock_create("PIDLock");
+	if (pid_lock == NULL) {
 		panic ("Failed to create PIDLock");
+	}
+	process_lock = lock_create("Process Lock");
+	if (process_lock == NULL) {
+		panic("Failed to create Process Lock");
+	}
+	process_list_lock = lock_create("Process List Lock");
+	if (process_list_lock == NULL) {
+		panic("Failed to create Process List Lock");
 	}
 #endif 
 }
-
-
-
-
 
 
 /*
@@ -401,17 +422,85 @@ curproc_setas(struct addrspace *newas)
 #if OPT_A2
 
 void handlePIDpcrelationship(struct proc* parent_process, struct proc* child_process) {
-	lock_acquire(pidlock);
-	unsigned int length_ProcessList = array_num(ProcessList);
-	unsigned int length_children_pid = array_num(parent_process->children_pid);
+	lock_acquire(pid_lock);
   child_process->self_pid = pid_counter;
   ++pid_counter;
-  child_process->parent_pid = parent_process->self_pid;
+	lock_release(pid_lock);
+	//TODO
+	lock_acquire(child_process->proc_lock);
+  child_process->parent_process = parent_process;
+	lock_release(child_process->proc_lock);
 	//DEBUG(DB_EXEC, "first");
-  array_add(parent_process->children_pid, (unsigned int *)child_process->self_pid, &length_ProcessList);
+	lock_acquire(parent_process->proc_lock);
+  array_add(parent_process->children_list, child_process, NULL);
 	//DEBUG(DB_EXEC, "second");
-  array_add(ProcessList, child_process, &length_children_pid);
-	//DEBUG(DB_EXEC, "third");
-  lock_release(pidlock);
+	//array_add(process_list, child_process, NULL);
+	//TODO:
+  lock_release(parent_process->proc_lock);
+	lock_acquire(process_list_lock);
+	array_add(process_list, child_process, NULL);
+	lock_release(process_list_lock);
+
 }
+
+bool inProcessList(unsigned int PID) {
+	lock_acquire(process_list_lock);
+	int lengthProcessList = array_num(process_list);
+	for (int i = 0; i < lengthProcessList; ++i) {
+		struct proc* temp_proc = (struct proc *)array_get(process_list, i);
+		if (temp_proc->self_pid == PID) {
+			lock_release(process_list_lock);
+			return true;
+		}
+	}
+	lock_release(process_list_lock);
+	//DEBUG(DB_EXEC, "No process with PID %d", PID);
+	return false;
+}
+
+struct proc *getChild(struct proc *parent_process, unsigned int PID) {
+	int len = array_num(parent_process->children_list);
+	for (int i = 0; i < len; ++i) {
+		struct proc* child_proc = (struct proc *)array_get(parent_process->children_list, i); 
+		if (child_proc->self_pid == PID) {
+			return child_proc;
+		}
+	}
+	return NULL;	   
+}	
+
+void removeFromProcessList(unsigned int PID){
+	lock_acquire(process_list_lock);
+	int lengthProcessList = array_num(process_list);
+	for (int i=0; i < lengthProcessList; ++i) {
+		struct proc* temp_proc = (struct proc *)array_get(process_list, i);
+		if (temp_proc->self_pid == PID)	{
+			//DEBUG(DB_EXEC, "Length of ProcessList before deletion: %d\n", array_num(process_list));
+			array_remove(process_list, i);
+			//DEBUG(DB_EXEC, "Length of ProcessList after deletion: %d\n", array_num(process_list));
+			lock_release(process_list_lock);
+			return;
+		}
+	}
+	lock_release(process_list_lock);
+	if (PID != 2) {
+		panic("Trying to delete process with PID: %d but it doesnt exist in the process table\n", PID);
+	}
+}
+
+void handleChildrenOnDeath(struct proc *p) {
+	struct array *children_list = p->children_list;	
+	int len = array_num(children_list);
+  for (int i = 0; i < len; ++i) {
+    struct proc* child_proc = (struct proc *)array_get(children_list, i); 
+    if (child_proc->isAlive == true) {
+			child_proc->parent_process = NULL;
+		}
+		else {
+			proc_destroy(child_proc);
+		}
+	}
+}
+	
+
 #endif
