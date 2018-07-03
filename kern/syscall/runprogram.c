@@ -44,6 +44,8 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#include "opt-A2.h"
+#include <copyinout.h>
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -52,12 +54,14 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, char **args, size_t args_counter)
 {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
+
+
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -97,8 +101,48 @@ runprogram(char *progname)
 		return result;
 	}
 
+	#if OPT_A2
+	size_t checklen = 0;
+	//decreasing stackptr by 1 so that its not 0x8000 0000 as we can not write to that address
+	stackptr = stackptr - 1;
+
+	//create an array of vaddr_t to track the vaddr of the arguments that we are putting onto the stack
+	vaddr_t args_vaddr[args_counter + 1];
+
+	//starting to set stack for the new address space
+	for (int i = args_counter - 1; i >= 0 ; --i) {
+		int arglength = strlen(args[i]) + 1;
+		stackptr = stackptr - arglength;
+		int arg_copy_result = copyoutstr(args[i], (userptr_t)stackptr, arglength, &checklen);
+		if (arg_copy_result) {
+			return arg_copy_result;
+		}
+		//store the starting address of where we wrote the string
+		args_vaddr[i] = stackptr;
+	}
+
+	//args[args_counter] is NULL whose vaddr is 0x0
+	args_vaddr[args_counter] = 0;
+
+	//now we have the args in the stack of the new address space we need to have the pointers to these args
+	//first get to an address divisible by 4
+	while ((stackptr % 4) != 0) {
+		stackptr = stackptr - 1;
+	}
+
+	//now we can start storing the vaddr of the arguments that we already have been tracking in args_vaddr
+	for (int i = args_counter; i >= 0; --i) {
+		int arg_size = ROUNDUP(sizeof(vaddr_t), 4);
+		stackptr = stackptr - arg_size;
+		int arg_vaddr_copy_result = copyout(&args_vaddr[i], (userptr_t)stackptr, sizeof(vaddr_t));
+		if (arg_vaddr_copy_result) {
+			return arg_vaddr_copy_result;
+		}
+	}
+	#endif
+
 	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+	enter_new_process(args_counter /*argc*/, (userptr_t)stackptr /*userspace addr of argv*/,
 			  stackptr, entrypoint);
 	
 	/* enter_new_process does not return. */

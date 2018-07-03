@@ -94,6 +94,14 @@ sys_waitpid(pid_t pid,
   int exitstatus;
   int result;
 
+  /* this is just a stub implementation that always reports an
+     exit status of 0, regardless of the actual exit status of
+     the specified process.   
+     In fact, this will return 0 even if the specified process
+     is still running, and even if it never existed in the first place.
+
+     Fix this!
+  */
 
   if (options != 0) {
     return(EINVAL);
@@ -178,65 +186,28 @@ sys_fork(struct trapframe *tf, int *retval) {
 }
 
 int
-sys_execv(userptr_t program_name, userptr_t oldas_args)
+sys_execv(userptr_t program_name, userptr_t args)
 {
-	
-	if (program_name == NULL) {
-		return EFAULT;
-	}
-		
 	size_t checklen = 0;
 	int prognamelength = strlen((char *)program_name) + 1;
 	char *progname = kmalloc(sizeof(char) * prognamelength);
-	
-
-	//check for failure of kmalloc
+	//TODO: check for failure of kmalloc
 	if (progname == NULL) {
 		return ENOMEM;
  	}
-	//copy programname from previous addresspace to Kernel
 	int progname_copy_result = copyinstr((const_userptr_t)program_name, progname, (size_t)prognamelength, &checklen); 
-	if (progname_copy_result) {
-		return progname_copy_result;
+	(void)args;
+	if (progname_copy_result == 0) {
+		kprintf("Program name passed to execv is %s]\n", progname);
 	}
-	//kprintf("Program name passed to execv is %s\n", progname);
-
-	//cast oldas_args which is a userptr_t to char**
-	char ** args = (char **)oldas_args;
-	int args_counter = 0;
-
-	//count the number of arguments in args
-	while (args[args_counter] != NULL) {
-		//kprintf("Argument %d is %s\n", args_counter,args[args_counter]);
-		++args_counter;
-	}
-	
-	//kprintf("Argument %d is %s\n", args_counter, args[args_counter]);
-	//kprintf("No of arguments passed are %d\n", args_counter);
-	
-	char **kargs = kmalloc(sizeof (char *) * (args_counter + 1));
-
-	if (kargs == NULL) {
+	else {
 		return ENOMEM;
 	}
+	
 
-	for (int i = 0; i < args_counter; ++i) {
-		int arglength = strlen(args[i]) + 1;
-		kargs[i] = kmalloc(sizeof(char) * arglength);
-		if (kargs[i] == NULL) {
-			return ENOMEM;
-		}
-		int arg_copy_result = copyinstr((const_userptr_t)args[i], kargs[i], (size_t)arglength, &checklen);
-		if (arg_copy_result) {
-			return arg_copy_result;
-		} 
-		//kprintf("Argument %d in kernel is %s\n", i,kargs[i]);
-	}
-	kargs[args_counter] = NULL;
-
-	//part of runprogram
-	struct addrspace *as;
-
+	
+	
+  struct addrspace *as;
   struct vnode *v;
   vaddr_t entrypoint, stackptr;
   int result;
@@ -276,49 +247,9 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
     /* p_addrspace will go away when curproc is destroyed */
     return result;
   }
-	
-	//creating a copy of stackptr
-	//vaddr_t stackptrcopy = stackptr;
-
-	//decreasing stackptr by 1 so that its not 0x8000 0000 as we can not write to that address
-	stackptr = stackptr - 1;
-
-	//create an array of vaddr_t to track the vaddr of the arguments that we are putting onto the stack
-	vaddr_t args_vaddr[args_counter + 1];
-
-	//starting to set stack for the new address space
-	for (int i = args_counter - 1; i >= 0 ; --i) {
-		int arglength = strlen(kargs[i]) + 1;
-		stackptr = stackptr - arglength;
-		int arg_copy_result = copyoutstr(kargs[i], (userptr_t)stackptr, arglength, &checklen);
-		if (arg_copy_result) {
-			return arg_copy_result;
-		}
-		//store the starting address of where we wrote the string
-		args_vaddr[i] = stackptr;
-	}
-
-	//kargs[args_counter] is NULL whose vaddr is 0x0
-	args_vaddr[args_counter] = 0;
-
-	//now we have the args in the stack of the new address space we need to have the pointers to these args
-	//first get to an address divisible by 4
-	while ((stackptr % 4) != 0) {
-		stackptr = stackptr - 1;
-	}
-
-	//now we can start storing the vaddr of the arguments that we already have been tracking in args_vaddr
-	for (int i = args_counter; i >= 0; --i) {
-		int arg_size = ROUNDUP(sizeof(vaddr_t), 4);
-		stackptr = stackptr - arg_size;
-		int arg_vaddr_copy_result = copyout(&args_vaddr[i], (userptr_t)stackptr, sizeof(vaddr_t));
-		if (arg_vaddr_copy_result) {
-			return arg_vaddr_copy_result;
-		}
-	}
 
   /* Warp to user mode. */
-  enter_new_process(args_counter, (userptr_t)stackptr /*userspace addr of argv*/,
+  enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
         stackptr, entrypoint);
 
   /* enter_new_process does not return. */
