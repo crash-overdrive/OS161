@@ -11,32 +11,19 @@
 #include <copyinout.h>
 #include "opt-A2.h"
 #include "mips/trapframe.h" 
-  /* this implementation of sys__exit does not do anything with the exit code */
-  /* this needs to be fixed to get exit() and waitpid() working properly */
-	
 
 #if OPT_A2
 #include <kern/fcntl.h>
 #include <vm.h>
 #include <vfs.h>
-
 #endif
-
 
 void sys__exit(int exitcode) {
 
 	struct addrspace *as;
 	struct proc *p = curproc;
 	handleChildrenOnDeath(p);
-	lock_acquire(process_lock);
-	if (p->parent_process != NULL) {
-		//lock_acquire(process_lock);
-		p->EXIT_CODE = _MKWAIT_EXIT(exitcode);
-		p->isAlive = false;
-		//lock_release(process_lock);
-		cv_signal(p->process_cv, process_lock);
-	}
-	lock_release(process_lock);
+	
 
 	DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
@@ -54,13 +41,24 @@ void sys__exit(int exitcode) {
 	as = curproc_setas(NULL);
 	as_destroy(as);
 
-	struct proc *temp_proc = p->parent_process;
+	struct proc *parent_proc = p->parent_process;
  
 
 	/* detach this thread from its process */
 	/* note: curproc cannot be used after this call */
+	struct cv *curproc_cv = p->process_cv;
+	lock_acquire(process_lock);
+	if (parent_proc != NULL) {
+		//lock_acquire(process_lock);
+		p->EXIT_CODE = _MKWAIT_EXIT(exitcode);
+		p->isAlive = false;
+		
+	}
 	proc_remthread(curthread);
-	if (temp_proc == NULL) {
+	cv_broadcast(curproc_cv, process_lock);
+	lock_release(process_lock);
+	//cv_broadcast(p->process_cv, process_lock);
+	if (parent_proc == NULL) {
     proc_destroy(p); 
   }
 	/* if this is the last user process in the system, proc_destroy()
