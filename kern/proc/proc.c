@@ -190,12 +190,12 @@ proc_destroy(struct proc *proc)
 #endif // UW
 
 #if OPT_A2
-	lock_destroy(proc->proc_lock);
-	cv_destroy(proc->process_cv);
-	array_setsize(proc->children_list,0);
-	array_destroy(proc->children_list);
-	removeFromProcessList(proc->self_pid);
-	handleChildrenOnDeath(proc);
+	//lock_destroy(proc->proc_lock);
+	//cv_destroy(proc->process_cv);
+	//array_setsize(proc->children_list,0);
+	//array_destroy(proc->children_list);
+	//removeFromProcessList(proc->self_pid);
+	//handleChildrenOnDeath(proc);
 #endif
 
 	threadarray_cleanup(&proc->p_threads);
