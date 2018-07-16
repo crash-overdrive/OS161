@@ -36,7 +36,7 @@
 
 
 #include <vm.h>
-
+#include "opt-A3.h"
 struct vnode;
 
 
@@ -55,6 +55,12 @@ struct addrspace {
   paddr_t as_pbase2;
   size_t as_npages2;
   paddr_t as_stackpbase;
+	#if OPT_A3
+	bool loadelfcompleted; //TODO: set to be inititally false, set to be true at end of loadelf, call as_activate() after that
+  int as_readable;
+  int as_writeable;
+  int as_executable;
+	#endif
 };
 
 /*

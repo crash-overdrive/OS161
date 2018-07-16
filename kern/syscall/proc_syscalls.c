@@ -11,11 +11,65 @@
 #include <copyinout.h>
 #include "opt-A2.h"
 #include "mips/trapframe.h" 
-
+#include "opt-A3.h"
 #if OPT_A2
 #include <kern/fcntl.h>
 #include <vm.h>
 #include <vfs.h>
+#endif
+#if OPT_A3
+void sys_kill(int exitcode) {
+
+  struct addrspace *as;
+  struct proc *p = curproc;
+  handleChildrenOnDeath(p);
+
+
+  DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+
+  KASSERT(p->p_addrspace != NULL);
+
+  as_deactivate();
+
+  /*
+   * clear p_addrspace before calling as_destroy. Otherwise if
+   * as_destroy sleeps (which is quite possible) when we
+   * come back we'll be calling as_activate on a
+   * half-destroyed address space. This tends to be
+   * messily fatal.
+   */
+  as = curproc_setas(NULL);
+  as_destroy(as);
+
+  struct proc *parent_proc = p->parent_process;
+
+
+  /* detach this thread from its process */
+  /* note: curproc cannot be used after this call */
+  struct cv *curproc_cv = p->process_cv;
+  lock_acquire(process_lock);
+  if (parent_proc != NULL) {
+		//lock_acquire(process_lock);
+    p->EXIT_CODE = _MKWAIT_SIG(exitcode);
+    p->isAlive = false;
+
+  }
+  proc_remthread(curthread);
+  cv_broadcast(curproc_cv, process_lock);
+  lock_release(process_lock);
+  //cv_broadcast(p->process_cv, process_lock);
+  if (parent_proc == NULL) {
+    proc_destroy(p);
+  }
+  /* if this is the last user process in the system, proc_destroy()
+     will wake up the kernel menu thread */
+
+  thread_exit();
+  /* thread_exit() does not return, so we should never get here */
+  panic("return from thread_exit in sys_exit\n");
+
+}
+
 #endif
 
 void sys__exit(int exitcode) {
@@ -172,6 +226,7 @@ sys_fork(struct trapframe *tf, int *retval) {
 	}
 
 	*retval = child_process->self_pid;	
+	//kfree(copytrapframe);
 	return 0;
 }
 

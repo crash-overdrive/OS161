@@ -36,7 +36,7 @@
 #include <current.h>
 #include <syscall.h>
 #include "opt-A2.h"
-
+#include "opt-A3.h"
 /*
  * System call dispatcher.
  *
@@ -141,6 +141,12 @@ syscall(struct trapframe *tf)
 			break;
 #endif
 
+#if OPT_A3
+		case SYS_kill:
+			sys_kill((int)tf->tf_a0);
+			panic("unexpected return from sys_kill");
+			break;
+#endif
 		default:
 			kprintf("Unknown syscall %d\n", callno);
 			err = ENOSYS;

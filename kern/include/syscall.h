@@ -29,7 +29,7 @@
 
 #ifndef _SYSCALL_H_
 #define _SYSCALL_H_
-
+#include "opt-A3.h"
 #include "opt-A2.h"
 
 struct trapframe; /* from <machine/trapframe.h> */
@@ -66,6 +66,9 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval);
 #if OPT_A2
 int sys_fork(struct trapframe *tf, int *retval);
 int sys_execv(userptr_t progname, userptr_t args);
+#endif
+#if OPT_A3
+void sys_kill(int exitcode);
 #endif
 #endif // UW
 

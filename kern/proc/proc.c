@@ -190,12 +190,12 @@ proc_destroy(struct proc *proc)
 #endif // UW
 
 #if OPT_A2
-	//lock_destroy(proc->proc_lock);
-	//cv_destroy(proc->process_cv);
-	//array_setsize(proc->children_list,0);
-	//array_destroy(proc->children_list);
-	//removeFromProcessList(proc->self_pid);
-	//handleChildrenOnDeath(curproc);
+	lock_destroy(proc->proc_lock);
+	cv_destroy(proc->process_cv);
+	array_setsize(proc->children_list,0);
+	array_destroy(proc->children_list);
+	removeFromProcessList(proc->self_pid);
+	handleChildrenOnDeath(proc);
 #endif
 
 	threadarray_cleanup(&proc->p_threads);
@@ -478,6 +478,10 @@ void removeFromProcessList(unsigned int PID){
 			//DEBUG(DB_EXEC, "Length of ProcessList before deletion: %d\n", array_num(process_list));
 			array_remove(process_list, i);
 			//DEBUG(DB_EXEC, "Length of ProcessList after deletion: %d\n", array_num(process_list));
+			lengthProcessList = array_num(process_list);
+			if (lengthProcessList == 0) {
+				array_destroy(process_list);
+			}
 			lock_release(process_list_lock);
 			return;
 		}

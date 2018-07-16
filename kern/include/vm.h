@@ -29,7 +29,7 @@
 
 #ifndef _VM_H_
 #define _VM_H_
-
+#include "opt-A3.h"
 /*
  * VM system-related definitions.
  *
@@ -43,7 +43,6 @@
 #define VM_FAULT_READ        0    /* A read was attempted */
 #define VM_FAULT_WRITE       1    /* A write was attempted */
 #define VM_FAULT_READONLY    2    /* A write to a readonly page was attempted*/
-
 
 /* Initialization function */
 void vm_bootstrap(void);
