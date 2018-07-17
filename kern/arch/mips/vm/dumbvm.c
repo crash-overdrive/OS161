@@ -89,13 +89,12 @@ getppages(unsigned long npages)
 	spinlock_acquire(&stealmem_lock);
 
 	#if OPT_A3
-	//kprintf("Allocate: %lu pages \n", npages);
 	if (!coreFormed) {
-		//kprintf("Stealing memory for boot \n");
 		addr = ram_stealmem(npages);
 	}
 	else {
 		int noOfPagesRequired = (int)npages;
+		//kprintf("Allocate: %d frames\n", noOfPagesRequired);
 		bool memBlockFound = false;
 		int startingFrame;
 		for (int i = 0; i < noOfFrames; ++i) {
@@ -128,14 +127,9 @@ getppages(unsigned long npages)
 		if (memBlockFound) {
 			for (int i = 0; i < noOfPagesRequired; ++i) {
 				coremap[startingFrame + i] = i + 1;
-				kprintf("Allocate: Set frame %d to %d\n", startingFrame + i, i+1);
+				//kprintf("Allocate: Set frame %d with address: 0x%x to %d\n", startingFrame + i,firstFrameAddr + ((startingFrame+i) * PAGE_SIZE) , i+1);
 			}
 			addr = firstFrameAddr + (startingFrame * PAGE_SIZE);
-			//for (int i = 0; i < noOfFrames; ++i) {
-      //  kprintf("Frame Number: %d, Frame Value: %d\n", i, coremap[i]);
-      //} 
-			//kprintf("Allocate: First page frame: %d, addr: 0x%x \n", startingFrame, firstFrameAddr + (startingFrame * PAGE_SIZE));
-			//kprintf("Allocate: Last page frame: %d, addr: 0x%x \n", startingFrame + noOfPagesRequired - 1, firstFrameAddr + (startingFrame + noOfPagesRequired - 1 * PAGE_SIZE));
 		}
 		else {
 			spinlock_release(&stealmem_lock);
@@ -180,32 +174,37 @@ free_kpages(vaddr_t addr)
 			return;
 		}
 		int currentFrame = (addr - firstFrameAddr)/PAGE_SIZE;
-		if (currentFrame <= noOfFrames) {
-			//kprintf("Delete: First frame is %d, addr: 0x%x \n", currentFrame, addr);
-			int previousFrameStatus = coremap[currentFrame];
-			//kprintf("Delete: First frame is %d, addr: 0x%x \n", currentFrame, addr);
-			//KASSERT(previousFrameStatus == 1);
-			coremap[currentFrame] = 0;
-			kprintf("Delete: Set First Frame %d to 0\n", currentFrame);
-			while (true) {
-				currentFrame = currentFrame + 1;
-				int currentFrameStatus = coremap[currentFrame];
-				//kprintf("Current frame status is %d \n", currentFrameStatus);
-				if (currentFrameStatus == previousFrameStatus + 1) {
-					previousFrameStatus = currentFrameStatus;
-					coremap[currentFrame] = 0;
-					kprintf("Delete: Set Frame %d to 0\n", currentFrame);
-				}
-				else {
-					//kprintf("Delete: Last frame is %d, addr: 0x%x \n", currentFrame - 1, addr + (currentFrame - 1) * PAGE_SIZE);
-					break;
-				}
+		if (currentFrame >= noOfFrames) { //got a stack address
+			addr = PADDR_TO_KVADDR(addr);
+			//kprintf("got stack address, normal address is 0x%x\n", addr);
+			currentFrame = (addr - firstFrameAddr)/PAGE_SIZE;
+		}
+		int previousFrameStatus = coremap[currentFrame];
+		//KASSERT(previousFrameStatus == 1);
+		coremap[currentFrame] = 0;
+		//kprintf("Delete: Set First Frame %d to 0\n", currentFrame);
+		while (currentFrame + 1 < noOfFrames) {
+			currentFrame = currentFrame + 1;
+			int currentFrameStatus = coremap[currentFrame];
+			if (currentFrameStatus == previousFrameStatus + 1) {
+				previousFrameStatus = currentFrameStatus;
+				coremap[currentFrame] = 0;
+				//kprintf("Delete: Set Frame %d to 0\n", currentFrame);
 			}
-			//for (int i = 0; i < noOfFrames; ++i) {
-      //  kprintf("Frame Number: %d, Frame Value: %d\n", i, coremap[i]);
-      //} 
+			else {
+				//kprintf("Delete: Set Last Frame %d to 0\n", currentFrame - 1);
+				break;
+			}
 		}
 	}
+	/*for (int i = 0; i < noOfFrames; ++i) {
+		kprintf("Leak check begins\n");
+		if(coremap[i] != 0) {
+			kprintf("Leaked Memory at frame %d\n",i);
+		}
+		kprintf("Leak check ends\n");
+	}
+	*/
 	spinlock_release(&stealmem_lock);
 	#endif
 }
@@ -413,8 +412,7 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 	sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
 
 	npages = sz / PAGE_SIZE;
-
-	/* We don't use these - all pages are read-write */
+	
 	#if OPT_A3
 		if (readable) {
 			as->as_readable = 1;
@@ -434,9 +432,6 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		else {
 			as->as_executable = 0;
 		}
-		//(void)readable;
-		//(void)writeable;
-		//(void)executable;
 
 	#endif
 	

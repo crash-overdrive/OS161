@@ -250,6 +250,7 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
 	//copy programname from previous addresspace to Kernel
 	int progname_copy_result = copyinstr((const_userptr_t)program_name, progname, (size_t)prognamelength, &checklen); 
 	if (progname_copy_result) {
+		kfree(progname);
 		return progname_copy_result;
 	}
 	//kprintf("Program name passed to execv is %s\n", progname);
@@ -270,6 +271,7 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
 	char **kargs = kmalloc(sizeof (char *) * (args_counter + 1));
 
 	if (kargs == NULL) {
+		kfree(progname);
 		return ENOMEM;
 	}
 
@@ -277,10 +279,20 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
 		int arglength = strlen(args[i]) + 1;
 		kargs[i] = kmalloc(sizeof(char) * arglength);
 		if (kargs[i] == NULL) {
+			kfree(progname);
+			for (int j = 0; j < i; ++j) {
+				kfree(kargs[j]);
+			}
+			kfree(kargs);
 			return ENOMEM;
 		}
 		int arg_copy_result = copyinstr((const_userptr_t)args[i], kargs[i], (size_t)arglength, &checklen);
 		if (arg_copy_result) {
+			kfree(progname);
+          	for(int j = 0; j < args_counter; ++j) {
+            	kfree(kargs[j]);
+          	}
+          	kfree(kargs); 
 			return arg_copy_result;
 		} 
 		//kprintf("Argument %d in kernel is %s\n", i,kargs[i]);
@@ -297,6 +309,11 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
   /* Open the file. */
   result = vfs_open(progname, O_RDONLY, 0, &v);
   if (result) {
+  	kfree(progname);
+  	for(int j = 0; j < args_counter; ++j) {
+    	kfree(kargs[j]);
+  	}
+  	kfree(kargs);
     return result;
   }
 
@@ -305,11 +322,16 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
   as = as_create();
   if (as ==NULL) {
     vfs_close(v);
+    kfree(progname);
+  	for(int j = 0; j < args_counter; ++j) {
+    	kfree(kargs[j]);
+  	}
+  	kfree(kargs);
     return ENOMEM;
   }
 
   /* Switch to it and activate it. */
-  curproc_setas(as);
+  struct addrspace* oldAddrSpc = curproc_setas(as);
   as_activate();
 
   /* Load the executable. */
@@ -317,6 +339,14 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
   if (result) {
     /* p_addrspace will go away when curproc is destroyed */
     vfs_close(v);
+    as_deactivate(); 
+    as = curproc_setas(oldAddrSpc);
+    as_destroy(as);
+    kfree(progname);
+  	for(int j = 0; j < args_counter; ++j) {
+    	kfree(kargs[j]);
+  	}
+  	kfree(kargs);
     return result;
   }
 
@@ -327,6 +357,14 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
   result = as_define_stack(as, &stackptr);
   if (result) {
     /* p_addrspace will go away when curproc is destroyed */
+    kfree(progname);
+    as_deactivate();
+    as = curproc_setas(oldAddrSpc);
+    as_destroy(as);
+  	for(int j = 0; j < args_counter; ++j) {
+    	kfree(kargs[j]);
+  	}
+  	kfree(kargs);
     return result;
   }
 	
@@ -345,6 +383,14 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
 		stackptr = stackptr - arglength;
 		int arg_copy_result = copyoutstr(kargs[i], (userptr_t)stackptr, arglength, &checklen);
 		if (arg_copy_result) {
+			kfree(progname);
+			as_deactivate();
+          as = curproc_setas(oldAddrSpc);
+          as_destroy(as);
+          	for(int j = 0; j < args_counter; ++j) {
+            	kfree(kargs[j]);
+          	}
+          	kfree(kargs);
 			return arg_copy_result;
 		}
 		//store the starting address of where we wrote the string
@@ -366,9 +412,25 @@ sys_execv(userptr_t program_name, userptr_t oldas_args)
 		stackptr = stackptr - arg_size;
 		int arg_vaddr_copy_result = copyout(&args_vaddr[i], (userptr_t)stackptr, sizeof(vaddr_t));
 		if (arg_vaddr_copy_result) {
+			kfree(progname);
+			as_deactivate();
+          as = curproc_setas(oldAddrSpc);
+          as_destroy(as);
+          	for(int j = 0; j < args_counter; ++j) {
+            	kfree(kargs[j]);
+          	}
+          	kfree(kargs);
 			return arg_vaddr_copy_result;
 		}
 	}
+	kfree(progname);
+	as_deactivate(); 
+    as_destroy(oldAddrSpc);
+    as_activate(); 
+  	for(int j = 0; j < args_counter; ++j) {
+    	kfree(kargs[j]);
+  	}
+  	kfree(kargs);
 
   /* Warp to user mode. */
   enter_new_process(args_counter, (userptr_t)stackptr /*userspace addr of argv*/,
