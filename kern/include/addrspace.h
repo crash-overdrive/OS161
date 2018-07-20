@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2000, 2001, 2002, 2003, 2004, 2005, 2008, 2009
- *	The President and Fellows of Harvard College.
+ *  The President and Fellows of Harvard College.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,20 +47,27 @@ struct vnode;
  * You write this.
  */
 
+
 struct addrspace {
   vaddr_t as_vbase1;
-  paddr_t as_pbase1;
+  //paddr_t as_pbase1;
   size_t as_npages1;
+  
   vaddr_t as_vbase2;
-  paddr_t as_pbase2;
+  //paddr_t as_pbase2;
   size_t as_npages2;
-  paddr_t as_stackpbase;
-	#if OPT_A3
-	bool loadelfcompleted; //TODO: set to be inititally false, set to be true at end of loadelf, call as_activate() after that
+  
+  //paddr_t as_stackpbase;
+  
+  #if OPT_A3
+  struct pageTableEntry *as_pageTable1;
+  struct pageTableEntry *as_pageTable2;
+  struct pageTableEntry *as_pageTableStack;
+  bool loadelfcompleted; //set to be inititally false, set to be true at end of loadelf, call as_activate() after that
   int as_readable;
   int as_writeable;
   int as_executable;
-	#endif
+  #endif
 };
 
 /*

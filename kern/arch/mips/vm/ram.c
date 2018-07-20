@@ -31,7 +31,7 @@
 #include <lib.h>
 #include <vm.h>
 #include <mainbus.h>
-
+#include "opt-A3.h"
 
 vaddr_t firstfree;   /* first free virtual address; set by start.S */
 
@@ -122,5 +122,13 @@ ram_getsize(paddr_t *lo, paddr_t *hi)
 {
 	*lo = firstpaddr;
 	*hi = lastpaddr;
+	//dont need to do firstpaddr = lastpaddr = 0 as we want to call this function multiple times!
+	//firstpaddr = lastpaddr = 0;
+}
+
+#if OPT_A3
+//once we have switched to coremap we dont need these variables anymore!
+void switchTocoremap(void) {
 	firstpaddr = lastpaddr = 0;
 }
+#endif

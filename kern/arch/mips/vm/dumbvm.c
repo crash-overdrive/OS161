@@ -45,67 +45,107 @@
 
 /* under dumbvm, always have 48k of user stack */
 #define DUMBVM_STACKPAGES    12
-#if OPT_A3
-int noOfFrames;
-bool coreFormed = false;
-int *coremap;
-paddr_t firstFrameAddr;
-#endif
+
 /*
  * Wrap rma_stealmem in a spinlock.
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+#if OPT_A3
+
+void alloc_coremap(void);
+
+int *coremap;
+paddr_t firstFrameAddr;
+int noOfFrames;
+bool coreFormed = false;
+
+struct pageTableEntry {
+  paddr_t frameBasePhysAddr;
+};
+
+void alloc_coremap(void) {
+	paddr_t minPhysAddr = 0;
+	paddr_t maxPhysAddr = 0;
+
+	//first get the minPhysAddr and maxPhysAddr
+	ram_getsize(&minPhysAddr, &maxPhysAddr);
+
+	//finding possible no of Frames 
+	noOfFrames = (maxPhysAddr - minPhysAddr) / PAGE_SIZE;	
+
+	//then steal memory for coremap 
+	coremap = kmalloc(sizeof (int) * noOfFrames);	
+
+	//get info about firstFrameAddr that is going to be allocated by the kernel
+	ram_getsize(&firstFrameAddr, &maxPhysAddr);
+
+	//round up the firstFrameAddr so that it is a multiple of PAGE_SIZE
+	while(firstFrameAddr % PAGE_SIZE != 0) {
+		firstFrameAddr = firstFrameAddr + 1;
+	}
+
+	//initialize coremap to be all empty
+	for (int i = 0; i < noOfFrames; ++i) {
+
+		coremap[i] = 0; 
+
+		if (firstFrameAddr + i * PAGE_SIZE > maxPhysAddr) {
+			//some issues might arise because of coremap needing multiple pages, this block takes care of it
+			//since we never want to access these out of bounds entries we can just reduce noOfFrames! Neat :D
+			noOfFrames = noOfFrames - 1;
+			kprintf("Out of bounds memory found during coremap initialisation, reduce noOfFrames \n");
+		}		
+	}
+	
+	//set coreFormed to be true as coremap is now formed and ready to go!
+	coreFormed = true;
+
+	//finally switch to coremap and start using it!
+	switchTocoremap();
+}
+
+#endif //OPT_A3
+
 void
 vm_bootstrap(void)
 {
 	#if OPT_A3
-		paddr_t minPhysAddr,maxPhysAddr;
-		ram_getsize(&minPhysAddr, &maxPhysAddr);
-		//initialize coremap to be at the start of minPhysAddr
-		coremap = (int *)PADDR_TO_KVADDR(minPhysAddr);
-		noOfFrames = (maxPhysAddr - minPhysAddr)/PAGE_SIZE;
-		//initialize firstFrameAddr to be at the start of minPhysAddr + coremap + some padding (to make it multiple of PAGE_SIZE)
-		firstFrameAddr = minPhysAddr + (sizeof(int) * noOfFrames);
-		while(firstFrameAddr % PAGE_SIZE != 0) {
-			firstFrameAddr = firstFrameAddr + 1;
-		}
-		//recalculate noOfFrames after allocating memory for coremap and then padding firstFrameAddr so that it is a multiple of PAGE_SIZE
-		noOfFrames = (maxPhysAddr - firstFrameAddr)/PAGE_SIZE;
-		//initialize coremap to be all empty
-		for (int i = 0; i < noOfFrames; ++i) {
-			coremap[i] = 0;
-		}
-		coreFormed = true;
+	alloc_coremap();	
 	#endif
 }
+
 
 static
 paddr_t
 getppages(unsigned long npages)
 {
 	paddr_t addr;
-
 	spinlock_acquire(&stealmem_lock);
-
 	#if OPT_A3
 	if (!coreFormed) {
 		addr = ram_stealmem(npages);
 	}
 	else {
+
 		int noOfPagesRequired = (int)npages;
 		//kprintf("Allocate: %d frames\n", noOfPagesRequired);
 		bool memBlockFound = false;
 		int startingFrame;
+
 		for (int i = 0; i < noOfFrames; ++i) {
 			if(coremap[i] == 0) { //checking if coremap at i is empty
+
 				startingFrame = i;
-				int noOfBlocksFound = 1;
+				int noOfPagesFound = 1;
+
 				if (noOfPagesRequired > 1) { //checking if we need more than 1 Frame to allocate the Pages
 					for (int j = i + 1; j < noOfFrames; ++j) {
 						if (coremap[j] == 0) { //checking if coremap at j is empty
-							++noOfBlocksFound;
-							if (noOfBlocksFound == noOfPagesRequired) { //checking if we hit the target of noOfPagesRequired
+
+							++noOfPagesFound;
+
+							if (noOfPagesFound == noOfPagesRequired) { //checking if we hit the target of noOfPagesRequired
 								memBlockFound = true;
 								break;
 							}
@@ -169,8 +209,8 @@ free_kpages(vaddr_t addr)
 	spinlock_acquire(&stealmem_lock);
 	if (coreFormed) {
 		if (!addr) {
-			spinlock_release(&stealmem_lock);
 			kprintf("Error while freeing");
+			spinlock_release(&stealmem_lock);
 			return;
 		}
 		int currentFrame = (addr - firstFrameAddr)/PAGE_SIZE;
@@ -197,14 +237,7 @@ free_kpages(vaddr_t addr)
 			}
 		}
 	}
-	/*for (int i = 0; i < noOfFrames; ++i) {
-		kprintf("Leak check begins\n");
-		if(coremap[i] != 0) {
-			kprintf("Leaked Memory at frame %d\n",i);
-		}
-		kprintf("Leak check ends\n");
-	}
-	*/
+		
 	spinlock_release(&stealmem_lock);
 	#endif
 }
@@ -269,17 +302,17 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	/* Assert that the address space has been set up properly. */
 	KASSERT(as->as_vbase1 != 0);
-	KASSERT(as->as_pbase1 != 0);
+	//KASSERT(as->as_pbase1 != 0);
 	KASSERT(as->as_npages1 != 0);
 	KASSERT(as->as_vbase2 != 0);
-	KASSERT(as->as_pbase2 != 0);
+	//KASSERT(as->as_pbase2 != 0);
 	KASSERT(as->as_npages2 != 0);
-	KASSERT(as->as_stackpbase != 0);
+	//KASSERT(as->as_stackpbase != 0);
 	KASSERT((as->as_vbase1 & PAGE_FRAME) == as->as_vbase1);
-	KASSERT((as->as_pbase1 & PAGE_FRAME) == as->as_pbase1);
+	//KASSERT((as->as_pbase1 & PAGE_FRAME) == as->as_pbase1);
 	KASSERT((as->as_vbase2 & PAGE_FRAME) == as->as_vbase2);
-	KASSERT((as->as_pbase2 & PAGE_FRAME) == as->as_pbase2);
-	KASSERT((as->as_stackpbase & PAGE_FRAME) == as->as_stackpbase);
+	//KASSERT((as->as_pbase2 & PAGE_FRAME) == as->as_pbase2);
+	//KASSERT((as->as_stackpbase & PAGE_FRAME) == as->as_stackpbase);
 
 	vbase1 = as->as_vbase1;
 	vtop1 = vbase1 + as->as_npages1 * PAGE_SIZE;
@@ -288,15 +321,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	stackbase = USERSTACK - DUMBVM_STACKPAGES * PAGE_SIZE;
 	stacktop = USERSTACK;
 
+	//TODO
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
-		paddr = (faultaddress - vbase1) + as->as_pbase1;
+
+		vaddr_t offset = (faultaddress - vbase1);
+        vaddr_t pageNum = offset / PAGE_SIZE;
+        paddr = as->as_pageTable1[pageNum].frameBasePhysAddr;		
+	
 		isCodeSegment = true;
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
-		paddr = (faultaddress - vbase2) + as->as_pbase2;
+		vaddr_t offset = (faultaddress - vbase2);
+        vaddr_t pageNum = offset / PAGE_SIZE;
+        paddr = as->as_pageTable2[pageNum].frameBasePhysAddr;	
 	}
 	else if (faultaddress >= stackbase && faultaddress < stacktop) {
-		paddr = (faultaddress - stackbase) + as->as_stackpbase;
+		vaddr_t offset = (faultaddress - stackbase);
+        vaddr_t pageNum = offset / PAGE_SIZE;
+        paddr = as->as_pageTableStack[pageNum].frameBasePhysAddr;	
 	}
 	else {
 		return EFAULT;
@@ -347,13 +389,18 @@ as_create(void)
 	}
 
 	as->as_vbase1 = 0;
-	as->as_pbase1 = 0;
+	//as->as_pbase1 = 0;
 	as->as_npages1 = 0;
 	as->as_vbase2 = 0;
-	as->as_pbase2 = 0;
+	//as->as_pbase2 = 0;
 	as->as_npages2 = 0;
-	as->as_stackpbase = 0;
+	//as->as_stackpbase = 0;
+	#if OPT_A3
 	as->loadelfcompleted = false;
+	as->as_pageTable1 = NULL;
+	as->as_pageTable2 = NULL;
+	as->as_pageTableStack = NULL;
+	#endif
 	return as;
 }
 
@@ -361,11 +408,40 @@ void
 as_destroy(struct addrspace *as)
 {
 	#if OPT_A3
-	free_kpages(as->as_pbase1);
-	free_kpages(as->as_pbase2);
-	free_kpages(as->as_stackpbase);
-	#endif
+	
+	for (int i = 0; i < (int)as->as_npages1; ++i) {
+		free_kpages(as->as_pageTable1[i].frameBasePhysAddr);
+	}
+
+	for (int i = 0; i < (int)as->as_npages2; ++i) {
+		free_kpages(as->as_pageTable2[i].frameBasePhysAddr);
+	}
+
+	for (int i = 0; i < DUMBVM_STACKPAGES; ++i) {
+		free_kpages(as->as_pageTableStack[i].frameBasePhysAddr);
+	}
+	
+	
+	kfree(as->as_pageTable1);
+	kfree(as->as_pageTable2);
+	kfree(as->as_pageTableStack);
 	kfree(as);
+
+	spinlock_acquire(&stealmem_lock);
+	/*kprintf("Leak check begins\n");
+	for (int i = 0; i < noOfFrames; ++i) {
+		
+		if(coremap[i] != 0) {
+			kprintf("Leaked Memory at frame %d has value %d\n",i, coremap[i]);
+		}
+		
+	}
+	kprintf("Leak check ends\n");
+	*/
+	spinlock_release(&stealmem_lock);
+
+	
+	#endif
 }
 
 void
@@ -463,29 +539,59 @@ as_zero_region(paddr_t paddr, unsigned npages)
 
 int
 as_prepare_load(struct addrspace *as)
-{
-	KASSERT(as->as_pbase1 == 0);
-	KASSERT(as->as_pbase2 == 0);
-	KASSERT(as->as_stackpbase == 0);
+{	
+	//allocationg memory for the page table entries for the address space
+	as->as_pageTable1 = kmalloc(sizeof(struct pageTableEntry) * (int)as->as_npages1);
+	if(as->as_pageTable1 == NULL){
+        return ENOMEM;
+    }
 
-	as->as_pbase1 = getppages(as->as_npages1);
-	if (as->as_pbase1 == 0) {
-		return ENOMEM;
-	}
+	as->as_pageTable2 = kmalloc(sizeof(struct pageTableEntry) * (int)as->as_npages2);
+	if(as->as_pageTable2 == NULL){
+        return ENOMEM;
+    }
 
-	as->as_pbase2 = getppages(as->as_npages2);
-	if (as->as_pbase2 == 0) {
-		return ENOMEM;
-	}
+	as->as_pageTableStack = kmalloc(sizeof(struct pageTableEntry) * DUMBVM_STACKPAGES);
+	if(as->as_pageTableStack == NULL){
+        return ENOMEM;
+    }
 
-	as->as_stackpbase = getppages(DUMBVM_STACKPAGES);
-	if (as->as_stackpbase == 0) {
-		return ENOMEM;
+
+	paddr_t pbase1, pbase2, pstackbase;
+	for (int i = 0; i < (int)as->as_npages1; ++i) {
+		pbase1 = getppages(1);
+
+		if (pbase1 == 0) {
+			return ENOMEM;
+		}		
+
+		as->as_pageTable1[i].frameBasePhysAddr = pbase1;
+
+		as_zero_region(pbase1, 1);
+		
 	}
-	
-	as_zero_region(as->as_pbase1, as->as_npages1);
-	as_zero_region(as->as_pbase2, as->as_npages2);
-	as_zero_region(as->as_stackpbase, DUMBVM_STACKPAGES);
+	for (int i = 0; i < (int)as->as_npages2; ++i) {
+		pbase2 = getppages(1);
+
+		if (pbase2 == 0) {
+			return ENOMEM;
+		}		
+
+		as->as_pageTable2[i].frameBasePhysAddr = pbase2;
+
+		as_zero_region(pbase2, 1);
+	}
+	for (int i = 0; i < (int)DUMBVM_STACKPAGES; ++i) {
+		pstackbase = getppages(1);
+
+		if (pstackbase == 0) {
+			return ENOMEM;
+		}		
+
+		as->as_pageTableStack[i].frameBasePhysAddr = pstackbase;
+
+		as_zero_region(pstackbase, 1);
+	}
 
 	return 0;
 }
@@ -500,8 +606,8 @@ as_complete_load(struct addrspace *as)
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	KASSERT(as->as_stackpbase != 0);
-
+	//KASSERT(as->as_stackpbase != 0);
+	(void)as;
 	*stackptr = USERSTACK;
 	return 0;
 }
@@ -521,27 +627,31 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	new->as_vbase2 = old->as_vbase2;
 	new->as_npages2 = old->as_npages2;
 
+	
+
 	/* (Mis)use as_prepare_load to allocate some physical memory. */
 	if (as_prepare_load(new)) {
 		as_destroy(new);
 		return ENOMEM;
 	}
 
-	KASSERT(new->as_pbase1 != 0);
-	KASSERT(new->as_pbase2 != 0);
-	KASSERT(new->as_stackpbase != 0);
+	for (int i = 0; i < (int)new->as_npages1; ++i) {
+		memmove((void *)PADDR_TO_KVADDR(new->as_pageTable1[i].frameBasePhysAddr),
+				(const void *)PADDR_TO_KVADDR(old->as_pageTable1[i].frameBasePhysAddr),
+				PAGE_SIZE);
+	}
 
-	memmove((void *)PADDR_TO_KVADDR(new->as_pbase1),
-		(const void *)PADDR_TO_KVADDR(old->as_pbase1),
-		old->as_npages1*PAGE_SIZE);
+	for (int i = 0; i < (int)new->as_npages2; ++i) {
+		memmove((void *)PADDR_TO_KVADDR(new->as_pageTable2[i].frameBasePhysAddr),
+				(const void *)PADDR_TO_KVADDR(old->as_pageTable2[i].frameBasePhysAddr),
+				PAGE_SIZE);
+	}
 
-	memmove((void *)PADDR_TO_KVADDR(new->as_pbase2),
-		(const void *)PADDR_TO_KVADDR(old->as_pbase2),
-		old->as_npages2*PAGE_SIZE);
-
-	memmove((void *)PADDR_TO_KVADDR(new->as_stackpbase),
-		(const void *)PADDR_TO_KVADDR(old->as_stackpbase),
-		DUMBVM_STACKPAGES*PAGE_SIZE);
+	for (int i = 0; i < DUMBVM_STACKPAGES; ++i) {
+		memmove((void *)PADDR_TO_KVADDR(new->as_pageTableStack[i].frameBasePhysAddr),
+				(const void *)PADDR_TO_KVADDR(old->as_pageTableStack[i].frameBasePhysAddr),
+				PAGE_SIZE);
+	}
 	
 	*ret = new;
 	return 0;
